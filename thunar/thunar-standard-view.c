@@ -53,6 +53,7 @@
 #include <thunar/thunar-history.h>
 #include <thunar/thunar-text-renderer.h>
 #include <thunar/thunar-thumbnailer.h>
+#include <thunar/thunar-protected-manager.h>
 
 #if defined(GDK_WINDOWING_X11)
 #include <gdk/gdkx.h>
@@ -203,6 +204,10 @@ static void                 thunar_standard_view_action_rename              (Gtk
                                                                              ThunarStandardView       *standard_view);
 static void                 thunar_standard_view_action_restore             (GtkAction                *action,
                                                                              ThunarStandardView       *standard_view);
+static void                 thunar_window_action_protect_current_directory  (GtkToggleAction          *action,
+                                                                             ThunarStandardView       *standard_view);
+static void                 thunar_window_action_protect_file               (GtkToggleAction          *action,
+                                                                             ThunarStandardView       *standard_view);
 static GClosure            *thunar_standard_view_new_files_closure          (ThunarStandardView       *standard_view,
                                                                              GtkWidget                *source_view);
 static void                 thunar_standard_view_new_files                  (ThunarStandardView       *standard_view,
@@ -324,6 +329,10 @@ struct _ThunarStandardViewPrivate
   GtkAction              *action_make_link;
   GtkAction              *action_rename;
   GtkAction              *action_restore;
+  GtkAction              *action_protect;
+  GtkAction              *action_protect_dir;
+
+  guint                   action_protect_blocker;
 
   /* history of the current view */
   ThunarHistory          *history;
@@ -417,6 +426,12 @@ static const GtkActionEntry action_entries[] =
   { "make-link", NULL, N_ ("Ma_ke Link"), NULL, NULL, G_CALLBACK (thunar_standard_view_action_make_link), },
   { "rename", NULL, N_ ("_Rename..."), "F2", NULL, G_CALLBACK (thunar_standard_view_action_rename), },
   { "restore", NULL, N_ ("_Restore"), NULL, NULL, G_CALLBACK (thunar_standard_view_action_restore), },
+};
+
+static const GtkToggleActionEntry toggle_action_entries[] =
+{
+  { "protect-file", NULL, N_ ("_Protect from Sandboxed Apps"), NULL, N_ ("Protects selected file(s) from being opened by untrusted sandboxed applications"), G_CALLBACK (thunar_window_action_protect_file), FALSE, },
+  { "protect-directory", NULL, N_ ("_Protect from Sandboxed Apps"), NULL, N_ ("Protects the current directory from being opened by untrusted sandboxed applications"), G_CALLBACK (thunar_window_action_protect_current_directory), FALSE, },
 };
 
 /* Target types for dragging from the view */
@@ -665,6 +680,9 @@ thunar_standard_view_init (ThunarStandardView *standard_view)
   gtk_action_group_add_actions (standard_view->action_group, action_entries,
                                 G_N_ELEMENTS (action_entries),
                                 GTK_WIDGET (standard_view));
+  gtk_action_group_add_toggle_actions (standard_view->action_group, toggle_action_entries,
+                                       G_N_ELEMENTS (toggle_action_entries),
+                                       GTK_WIDGET (standard_view));
 
   /* lookup all actions to speed up access later */
   standard_view->priv->action_create_folder = gtk_action_group_get_action (standard_view->action_group, "create-folder");
@@ -679,6 +697,9 @@ thunar_standard_view_init (ThunarStandardView *standard_view)
   standard_view->priv->action_make_link = gtk_action_group_get_action (standard_view->action_group, "make-link");
   standard_view->priv->action_rename = gtk_action_group_get_action (standard_view->action_group, "rename");
   standard_view->priv->action_restore = gtk_action_group_get_action (standard_view->action_group, "restore");
+  standard_view->priv->action_protect = gtk_action_group_get_action (standard_view->action_group, "protect-file");
+  standard_view->priv->action_protect_dir = gtk_action_group_get_action (standard_view->action_group, "protect-directory");
+  standard_view->priv->action_protect_blocker = 0;
 
   /* add the "Create Document" sub menu action */
   standard_view->priv->action_create_document = thunar_templates_action_new ("create-document", _("Create _Document"));
@@ -2895,6 +2916,68 @@ thunar_standard_view_action_restore (GtkAction          *action,
 
 
 
+static void
+thunar_window_action_protect_current_directory (GtkToggleAction    *action,
+                                                ThunarStandardView *standard_view)
+{
+  GtkWidget *toplevel = NULL;
+  GList     *list     = NULL;
+
+  _thunar_return_if_fail (GTK_IS_ACTION (action));
+  _thunar_return_if_fail (THUNAR_IS_STANDARD_VIEW (standard_view));
+
+  if (!standard_view->priv->action_protect_blocker)
+    {
+      if (gtk_toggle_action_get_active (action))
+        {
+          list = g_list_prepend (NULL, standard_view->priv->current_directory);
+
+          toplevel = gtk_widget_get_toplevel (GTK_WIDGET (standard_view));
+          thunar_protected_show_protection_dialog (gtk_widget_is_toplevel (toplevel) ? toplevel : NULL,
+                                                   list);
+
+          g_list_free (list);
+        }
+      else
+        {
+          thunar_protected_remove_protected_file (standard_view->priv->current_directory);
+          thunar_protected_manager_flush ();
+        }
+    }
+}
+
+
+
+static void
+thunar_window_action_protect_file         (GtkToggleAction    *action,
+                                           ThunarStandardView *standard_view)
+{
+  GtkWidget *toplevel = NULL;
+  GList     *lp;
+
+  _thunar_return_if_fail (GTK_IS_ACTION (action));
+  _thunar_return_if_fail (THUNAR_IS_STANDARD_VIEW (standard_view));
+
+  if (!standard_view->priv->action_protect_blocker)
+    {
+      if (gtk_toggle_action_get_active (action))
+        {
+          toplevel = gtk_widget_get_toplevel (GTK_WIDGET (standard_view));
+          thunar_protected_show_protection_dialog (gtk_widget_is_toplevel (toplevel) ? toplevel : NULL,
+                                                   standard_view->priv->selected_files);
+        }
+      else
+        {
+          for (lp = standard_view->priv->selected_files; lp; lp = lp->next)
+            thunar_protected_remove_protected_file (lp->data);
+
+          thunar_protected_manager_flush ();
+        }
+    }
+}
+
+
+
 static GClosure*
 thunar_standard_view_new_files_closure (ThunarStandardView *standard_view,
                                         GtkWidget          *source_view)
@@ -4342,15 +4425,16 @@ thunar_standard_view_queue_popup (ThunarStandardView *standard_view,
 void
 thunar_standard_view_selection_changed (ThunarStandardView *standard_view)
 {
-  GtkTreeIter iter;
-  ThunarFile *current_directory;
-  gboolean    can_paste_into_folder;
-  gboolean    restorable;
-  gboolean    pastable;
-  gboolean    writable;
-  gboolean    trashed;
-  GList      *lp, *selected_files;
-  gint        n_selected_files = 0;
+  GtkTreeIter             iter;
+  ThunarFile             *current_directory;
+  gboolean                can_paste_into_folder;
+  gboolean                restorable;
+  gboolean                protected;
+  gboolean                pastable;
+  gboolean                writable;
+  gboolean                trashed;
+  GList                  *lp, *selected_files;
+  gint                    n_selected_files = 0;
 
   _thunar_return_if_fail (THUNAR_IS_STANDARD_VIEW (standard_view));
 
@@ -4367,7 +4451,21 @@ thunar_standard_view_selection_changed (ThunarStandardView *standard_view)
 
   /* determine the new list of selected files (replacing GtkTreePath's with ThunarFile's) */
   selected_files = (*THUNAR_STANDARD_VIEW_GET_CLASS (standard_view)->get_selected_items) (standard_view);
-  restorable = (selected_files != NULL);
+
+  /* determine the current directory */  
+  current_directory = thunar_navigator_get_current_directory (THUNAR_NAVIGATOR (standard_view));
+
+  /* determine whether the selection is protected, and whether there is something to restore */
+  if (selected_files != NULL)
+    {
+      protected = restorable = TRUE;
+    }
+  else
+    {
+      restorable = FALSE;
+      protected = current_directory ? thunar_protected_manager_is_file_protected_directly (current_directory) : FALSE;
+    }
+
   for (lp = selected_files; lp != NULL; lp = lp->next, ++n_selected_files)
     {
       /* determine the iterator for the path */
@@ -4382,13 +4480,16 @@ thunar_standard_view_selection_changed (ThunarStandardView *standard_view)
       /* enable "Restore" if we have only trashed files (atleast one file) */
       if (!thunar_file_is_trashed (lp->data))
         restorable = FALSE;
+
+      /* if any selected file is not protected, don't check the toggle action */
+      if (protected && lp->data && !thunar_protected_manager_is_file_protected_directly (lp->data))
+        protected = FALSE;
     }
 
   /* and setup the new selected files list */
   standard_view->priv->selected_files = selected_files;
 
   /* check whether the folder displayed by the view is writable/in the trash */
-  current_directory = thunar_navigator_get_current_directory (THUNAR_NAVIGATOR (standard_view));
   writable = (current_directory != NULL && thunar_file_is_writable (current_directory));
   trashed = (current_directory != NULL && thunar_file_is_trashed (current_directory));
 
@@ -4483,6 +4584,25 @@ thunar_standard_view_selection_changed (ThunarStandardView *standard_view)
                                      "Restore the selected files",
                                      n_selected_files),
                 NULL);
+
+  /* update the "Protect" action */
+  standard_view->priv->action_protect_blocker = 1;
+  g_object_set (G_OBJECT (standard_view->priv->action_protect),
+                "sensitive", n_selected_files > 0,
+                "active", protected,
+                "tooltip", ngettext ("Protect the selected file",
+                                     "Protect the selected files",
+                                     n_selected_files),
+                NULL);
+
+  g_object_set (G_OBJECT (standard_view->priv->action_protect_dir),
+                "sensitive", n_selected_files == 0,
+                "active", protected,
+                "tooltip", ngettext ("Protect the current directory",
+                                     "Protect the current directory",
+                                     n_selected_files),
+                NULL);
+  standard_view->priv->action_protect_blocker = 0;
 
   /* update the statusbar text */
   thunar_standard_view_update_statusbar_text (standard_view);

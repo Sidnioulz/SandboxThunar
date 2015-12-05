@@ -157,6 +157,14 @@ thunar_SOURCES =							\
 	thunar-progress-view.h						\
 	thunar-properties-dialog.c					\
 	thunar-properties-dialog.h					\
+	thunar-protected-chooser-button.c						\
+	thunar-protected-chooser-button.h						\
+	thunar-protected-chooser-dialog.c						\
+	thunar-protected-chooser-dialog.h						\
+	thunar-protected-chooser-model.c						\
+	thunar-protected-chooser-model.h						\
+	thunar-protected-manager.c					\
+	thunar-protected-manager.h					\
 	thunar-renamer-dialog.c						\
 	thunar-renamer-dialog.h						\
 	thunar-renamer-model.c						\
@@ -226,6 +234,7 @@ thunar_CFLAGS =								\
 	$(LIBSM_CFLAGS)							\
 	$(LIBXFCE4UI_CFLAGS)						\
 	$(XFCONF_CFLAGS)						\
+	$(EXECHELPER_CFLAGS)						\
 	$(PLATFORM_CFLAGS)
 
 thunar_LDFLAGS =							\
@@ -242,6 +251,7 @@ thunar_LDADD =								\
 	$(LIBNOTIFY_LIBS)						\
 	$(LIBSM_LIBS)							\
 	$(LIBXFCE4UI_LIBS)						\
+	$(EXECHELPER_LIBS)						\
 	$(XFCONF_LIBS)
 
 thunar_DEPENDENCIES =							\

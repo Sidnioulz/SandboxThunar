@@ -41,6 +41,7 @@
 #include <thunar/thunar-gobject-extensions.h>
 #include <thunar/thunar-private.h>
 #include <thunar/thunar-notify.h>
+#include <thunar/thunar-protected-manager.h>
 #include <thunar/thunar-session-client.h>
 #include <thunar/thunar-stock.h>
 #include <thunar/thunar-preferences.h>
@@ -212,6 +213,9 @@ main (int argc, char **argv)
 
   /* determine the current working directory */
   working_directory = g_get_current_dir ();
+
+  /* load the protected files manager prior to displaying anything */
+  thunar_protected_manager_get();
 
   /* check if atleast one filename was specified, else
    * fall back to opening the current working directory

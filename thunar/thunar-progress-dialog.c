@@ -133,7 +133,9 @@ thunar_progress_dialog_finalize (GObject *object)
   if (dialog->status_icon != NULL)
     {
       gtk_status_icon_set_visible (dialog->status_icon, FALSE);
+      g_signal_handlers_disconnect_by_func (dialog->status_icon, G_CALLBACK (thunar_progress_dialog_toggled), GTK_WIDGET (dialog));
       g_object_unref (dialog->status_icon);
+      dialog->status_icon = NULL;
     }
 
   /* free the view list */

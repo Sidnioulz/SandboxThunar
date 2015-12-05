@@ -68,6 +68,7 @@
 #include <thunar/thunar-util.h>
 #include <thunar/thunar-dialogs.h>
 #include <thunar/thunar-icon-factory.h>
+#include <thunar/thunar-protected-manager.h>
 
 
 
@@ -3315,6 +3316,11 @@ thunar_file_get_emblem_names (ThunarFile *file)
       emblems = g_list_prepend (emblems, THUNAR_FILE_EMBLEM_NAME_CANT_WRITE);
     }
 
+  if (thunar_protected_manager_is_file_protected_directly (file))
+    {
+      emblems = g_list_prepend (emblems, THUNAR_FILE_EMBLEM_PROTECTED);
+    }
+
   return emblems;
 }
 
@@ -3920,7 +3926,7 @@ thunar_file_unwatch (ThunarFile *file)
 gboolean
 thunar_file_reload (ThunarFile *file)
 {
-  _thunar_return_if_fail (THUNAR_IS_FILE (file));
+  _thunar_return_val_if_fail (THUNAR_IS_FILE (file), FALSE);
 
   /* clear file pxmap cache */
   thunar_icon_factory_clear_pixmap_cache (file);

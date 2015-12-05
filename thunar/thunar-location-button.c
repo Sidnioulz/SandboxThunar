@@ -37,6 +37,7 @@
 #include <thunar/thunar-pango-extensions.h>
 #include <thunar/thunar-preferences.h>
 #include <thunar/thunar-private.h>
+#include <thunar/thunar-protected-manager.h>
 
 
 
@@ -384,7 +385,6 @@ thunar_location_button_style_set (GtkWidget *widget,
                                   GtkStyle  *previous_style)
 {
   ThunarLocationButton *location_button = THUNAR_LOCATION_BUTTON (widget);
-
   /* update the user interface if we have a file */
   if (G_LIKELY (location_button->file != NULL))
     thunar_location_button_file_changed (location_button, location_button->file);
@@ -422,15 +422,16 @@ static void
 thunar_location_button_file_changed (ThunarLocationButton *location_button,
                                      ThunarFile           *file)
 {
-  ThunarIconFactory *icon_factory;
-  GtkIconTheme      *icon_theme;
-  GtkSettings       *settings;
-  GdkPixbuf         *icon;
-  const gchar       *icon_name;
-  gint               height;
-  gint               width;
-  gint               size;
-  const gchar       *custom_icon;
+  ThunarIconFactory      *icon_factory;
+  GtkIconTheme           *icon_theme;
+  GtkSettings            *settings;
+  GdkPixbuf              *icon;
+  const gchar            *icon_name;
+  gint                    height;
+  gint                    width;
+  gint                    size;
+  const gchar            *custom_icon;
+  gboolean                protected_directly = FALSE;
 
   _thunar_return_if_fail (THUNAR_IS_LOCATION_BUTTON (location_button));
   _thunar_return_if_fail (location_button->file == file);
@@ -438,6 +439,9 @@ thunar_location_button_file_changed (ThunarLocationButton *location_button,
 
   /* determine the icon theme for the widget */
   icon_theme = gtk_icon_theme_get_for_screen (gtk_widget_get_screen (GTK_WIDGET (location_button)));
+
+  /* find out if the file being represented is protected, directly or indirectly */
+  protected_directly = thunar_protected_manager_is_file_protected_directly (file);
 
   /* update and show the label widget (hide for the local root folder) */
   if (thunar_file_is_local (file) && thunar_file_is_root (file)) 
@@ -453,7 +457,12 @@ thunar_location_button_file_changed (ThunarLocationButton *location_button,
     }
 
   /* the image is only visible for certain special paths */
-  if (thunar_file_is_home (file) || thunar_file_is_desktop (file) || thunar_file_is_root (file))
+  if (protected_directly)
+    {
+      gtk_image_set_from_icon_name (GTK_IMAGE (location_button->image), "firejail-protect", GTK_ICON_SIZE_MENU);
+      gtk_widget_show (location_button->image);
+    }
+  else if (thunar_file_is_home (file) || thunar_file_is_desktop (file) || thunar_file_is_root (file))
     {
       /* determine the icon size for menus (to be compatible with GtkPathBar) */
       settings = gtk_settings_get_for_screen (gtk_widget_get_screen (GTK_WIDGET (location_button)));

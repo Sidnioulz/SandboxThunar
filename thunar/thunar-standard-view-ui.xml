@@ -34,6 +34,7 @@
         <menuitem action="invert-selection" />
       </placeholder>
       <placeholder name="placeholder-edit-alter-actions">
+        <menuitem action="protect-file" />
         <menuitem action="duplicate" />
         <menuitem action="make-link" />
         <menuitem action="rename" />
@@ -59,6 +60,7 @@
       <menuitem action="delete" />
     </placeholder>
     <placeholder name="placeholder-edit-actions">
+      <menuitem action="protect-file" />
       <menuitem action="rename" />
       <menuitem action="restore" />
     </placeholder>
@@ -74,6 +76,7 @@
     <separator />
     <menuitem action="paste" />
     <separator />
+    <menuitem action="protect-directory" />
     <placeholder name="placeholder-custom-actions" />
     <separator />
     <placeholder name="placeholder-view-items-actions" />

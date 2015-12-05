@@ -45,6 +45,7 @@
 #include <thunar/thunar-path-entry.h>
 #include <thunar/thunar-private.h>
 #include <thunar/thunar-util.h>
+#include <thunar/thunar-protected-manager.h>
 
 
 
@@ -666,6 +667,8 @@ thunar_path_entry_update_icon (ThunarPathEntry *path_entry)
   GdkPixbuf          *icon = NULL;
   GtkIconTheme       *icon_theme;
   gint                icon_size;
+  gboolean            protected = FALSE;
+  GdkColor            color;
 
   if (path_entry->icon_factory == NULL)
     {
@@ -677,17 +680,21 @@ thunar_path_entry_update_icon (ThunarPathEntry *path_entry)
 
   if (G_UNLIKELY (path_entry->current_file != NULL))
     {
-      icon = thunar_icon_factory_load_file_icon (path_entry->icon_factory,
-                                                 path_entry->current_file,
-                                                 THUNAR_FILE_ICON_STATE_DEFAULT,
-                                                 icon_size);
+      protected = thunar_protected_manager_is_file_protected (path_entry->current_file);
+      if (!protected) // force the use of the protected icon
+        icon = thunar_icon_factory_load_file_icon (path_entry->icon_factory,
+                                                   path_entry->current_file,
+                                                   THUNAR_FILE_ICON_STATE_DEFAULT,
+                                                   icon_size);
     }
   else if (G_LIKELY (path_entry->current_folder != NULL))
     {
-      icon = thunar_icon_factory_load_file_icon (path_entry->icon_factory,
-                                                 path_entry->current_folder,
-                                                 THUNAR_FILE_ICON_STATE_DEFAULT,
-                                                 icon_size);
+      protected = thunar_protected_manager_is_file_protected (path_entry->current_folder);
+      if (!protected) // force the use of the protected icon
+        icon = thunar_icon_factory_load_file_icon (path_entry->icon_factory,
+                                                   path_entry->current_folder,
+                                                   THUNAR_FILE_ICON_STATE_DEFAULT,
+                                                   icon_size);
     }
 
   if (icon != NULL)
@@ -697,11 +704,46 @@ thunar_path_entry_update_icon (ThunarPathEntry *path_entry)
                                       icon);
       g_object_unref (icon);
     }
+  else if (protected)
+    {
+      gtk_entry_set_icon_from_icon_name (GTK_ENTRY (path_entry),
+                                         GTK_ENTRY_ICON_PRIMARY,
+                                         "firejail-protect");
+    }
   else
     {
       gtk_entry_set_icon_from_icon_name (GTK_ENTRY (path_entry),
                                          GTK_ENTRY_ICON_PRIMARY,
                                          GTK_STOCK_DIALOG_ERROR);
+    }
+
+  if (protected)
+    {
+      if (gdk_color_parse("#b7fd3f", &color))
+        {
+          gtk_widget_modify_base (GTK_WIDGET (path_entry), GTK_STATE_NORMAL, &color);
+          gtk_widget_modify_base (GTK_WIDGET (path_entry), GTK_STATE_ACTIVE, &color);
+          gtk_widget_modify_base (GTK_WIDGET (path_entry), GTK_STATE_PRELIGHT, &color);
+        }
+      if (gdk_color_parse("#333", &color))
+        {
+          gtk_widget_modify_text (GTK_WIDGET (path_entry), GTK_STATE_NORMAL, &color);
+          gtk_widget_modify_text (GTK_WIDGET (path_entry), GTK_STATE_INSENSITIVE, &color);
+          gtk_widget_modify_text (GTK_WIDGET (path_entry), GTK_STATE_ACTIVE, &color);
+          gtk_widget_modify_text (GTK_WIDGET (path_entry), GTK_STATE_PRELIGHT, &color);
+        }
+      if (gdk_color_parse("#abcd6f", &color))
+        {
+          gtk_widget_modify_base (GTK_WIDGET (path_entry), GTK_STATE_INSENSITIVE, &color);
+        }
+    }
+  else
+    {
+      gtk_widget_modify_base (GTK_WIDGET (path_entry), GTK_STATE_NORMAL, NULL);
+      gtk_widget_modify_base (GTK_WIDGET (path_entry), GTK_STATE_ACTIVE, NULL);
+      gtk_widget_modify_base (GTK_WIDGET (path_entry), GTK_STATE_PRELIGHT, NULL);
+      gtk_widget_modify_base (GTK_WIDGET (path_entry), GTK_STATE_SELECTED, NULL);
+      gtk_widget_modify_base (GTK_WIDGET (path_entry), GTK_STATE_INSENSITIVE, NULL);
     }
 }
 

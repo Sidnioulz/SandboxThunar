@@ -343,8 +343,6 @@ struct _ThunarWindow
   GType                   toggle_sidepane_type;
 };
 
-
-
 static GtkActionEntry action_entries[] =
 {
   { "file-menu", NULL, N_ ("_File"), NULL, },
