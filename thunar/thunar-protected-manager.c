@@ -48,7 +48,6 @@
 #include <thunar/thunar-device-monitor.h>
 #include <thunar/thunar-protected-chooser-button.h>
 #include <thunar/thunar-stock.h>
-#include <firejail/exechelper.h>
 #include <glib.h>
 
 
@@ -105,15 +104,6 @@ thunar_protected_manager_class_init (ThunarProtectedManagerClass *klass)
                   G_TYPE_NONE, 0, G_TYPE_NONE);
 }
 
-typedef struct _DialogLineData
-{
-  GList *handlers;
-  GList *profiles;
-  GList *files;
-  GList *apps;
-  GtkTable *content_area;
-  gboolean folders_only;
-} DialogLineData;
 
 static void
 thunar_protected_show_protection_dialog_cb (GtkDialog *dialog,
@@ -126,7 +116,7 @@ thunar_protected_show_protection_dialog_cb (GtkDialog *dialog,
                                             gpointer   user_data)
 {
   ThunarProtectedManager *manager  = thunar_protected_manager_get ();
-  DialogLineData         *data     = (DialogLineData *) user_data;
+  ProtectionDialogData   *data     = (ProtectionDialogData *) user_data;
   GtkComboBoxText        *pbox;
   GAppInfo               *handler;
   GList                  *lh, *lp;
@@ -308,7 +298,7 @@ static void
 thunar_protected_dialog_add_line (GtkButton *button,
                                   gpointer   user_data)
 {
-  DialogLineData *data = user_data;
+  ProtectionDialogData *data = user_data;
   GtkWidget      *w1, *w2;
   guint           row;
 
@@ -333,20 +323,20 @@ thunar_protected_dialog_add_line (GtkButton *button,
   gtk_widget_show_all (GTK_WIDGET (data->content_area));
 }
 
-gboolean
-thunar_protected_show_protection_dialog (GtkWidget *parent, GList *files)
+ProtectionDialogData *
+thunar_protected_show_protection_dialog (GtkWidget *parent, GList *files, gboolean policy_authoring_mode)
 {
   ThunarProtectedManager *manager = thunar_protected_manager_get ();
   ThunarApplication      *application;
-  DialogLineData         *data = NULL;
+  ProtectionDialogData   *data = NULL;
   GtkWidget              *dialog, *widget, *box, *content_area, *table;
   GList                  *lp;
 
-  g_return_val_if_fail (manager != NULL, FALSE);
-  g_return_val_if_fail (files != NULL, FALSE);
+  g_return_val_if_fail (manager != NULL, NULL);
+  g_return_val_if_fail (files != NULL, NULL);
 
   // create the dialog
-  dialog = gtk_dialog_new_with_buttons ("Add Protected Files",
+  dialog = gtk_dialog_new_with_buttons (policy_authoring_mode? "Add Protected Files" : "Open Files in Sandbox",
                                         GTK_WINDOW (parent),
                                         GTK_DIALOG_DESTROY_WITH_PARENT,
                                         GTK_STOCK_CANCEL,
@@ -359,7 +349,9 @@ thunar_protected_show_protection_dialog (GtkWidget *parent, GList *files)
   gtk_container_add (GTK_CONTAINER (content_area), box);
   content_area = box;
 
-  data = g_malloc0 (sizeof (DialogLineData));
+  data = g_malloc0 (sizeof (ProtectionDialogData));
+  data->dialog = dialog;
+  data->user_data = NULL;
   data->files = g_list_copy_deep (files, (GCopyFunc) g_object_ref, NULL);
   data->apps = thunar_file_list_get_applications (files);
 
@@ -394,15 +386,18 @@ thunar_protected_show_protection_dialog (GtkWidget *parent, GList *files)
   thunar_protected_dialog_add_line (NULL, data);
   
   // add the "Add" button
-  widget = gtk_button_new_with_label ("Add an Application");
-  box = gtk_hbox_new (FALSE, 12);
-  gtk_box_pack_start (GTK_BOX (box), widget, FALSE, FALSE, 12);
-  gtk_box_pack_start (GTK_BOX (content_area), box, FALSE, FALSE, 12);
+  if (policy_authoring_mode)
+  {
+    widget = gtk_button_new_with_label ("Add an Application");
+    box = gtk_hbox_new (FALSE, 12);
+    gtk_box_pack_start (GTK_BOX (box), widget, FALSE, FALSE, 12);
+    gtk_box_pack_start (GTK_BOX (content_area), box, FALSE, FALSE, 12);
 
-  g_signal_connect (widget, "clicked", G_CALLBACK (thunar_protected_dialog_add_line), data);
+    g_signal_connect (widget, "clicked", G_CALLBACK (thunar_protected_dialog_add_line), data);
 
-  // connect all responses from dialog to the handler which will free the data
-  g_signal_connect (dialog, "response", G_CALLBACK (thunar_protected_show_protection_dialog_cb), data);
+    // connect all responses from dialog to the handler which will free the data
+    g_signal_connect (dialog, "response", G_CALLBACK (thunar_protected_show_protection_dialog_cb), data);
+  }
 
   // show the dialog
   gtk_widget_show_all (dialog);
@@ -410,7 +405,7 @@ thunar_protected_show_protection_dialog (GtkWidget *parent, GList *files)
   thunar_application_take_window (application, GTK_WINDOW (dialog));
   g_object_unref (G_OBJECT (application));
 
-  return TRUE;
+  return data;
 }
 
 gboolean
@@ -487,6 +482,60 @@ thunar_protected_remove_protected_file (ThunarFile *file)
   manager->policy_dirty = TRUE;
   return TRUE;
 }
+
+GList *
+thunar_protected_get_applications_for_files (GList *files)
+{
+  ExecHelpProtectedFileHandler *merged;
+  ExecHelpHandlerMergeResult    result;
+  ExecHelpList                 *list;
+  ExecHelpList                 *ehp;
+  GList                        *applications = NULL;
+  GList                        *prepend      = NULL;
+  GList                        *fp;
+  GList                        *ip;
+  gchar                        *path;
+
+  for (fp = files; fp != NULL; fp = fp->next)
+    {
+      path = g_file_get_path (thunar_file_get_file (fp->data));
+      list = protected_files_get_handlers_for_file (path);
+      TRACE ("ExecHelper: %s gives us %d items", path, exechelp_list_length (list));
+      g_free (path);
+
+      if (G_UNLIKELY (applications == NULL))
+        {
+          /* first file, so just use the applications list */
+          for (ehp = list; ehp != NULL; ehp = ehp->next)
+            applications = g_list_append (applications, ehp->data);
+        }
+      else
+        {
+          /* keep only the applications that are also present in list */
+          for (ehp = list; ehp != NULL; ehp = ehp->next)
+            {
+              for (ip = applications; ip; ip = ip->next)
+                {
+                  merged = NULL;
+                  result = protected_files_handlers_merge (ehp->data, ip->data, &merged);
+
+                  if (result == HANDLER_IDENTICAL)
+                    prepend = g_list_prepend (prepend, protected_files_handler_copy (ip->data, NULL));
+                  else if (result == HANDLER_USE_MERGED)
+                    prepend = g_list_prepend (prepend, merged);
+                }
+
+              g_list_free_full(applications, (ExecHelpDestroyNotify) protected_files_handler_free);
+              applications = prepend;
+            }
+        }
+    }
+
+  TRACE ("ExecHelper: returning %d merged items", g_list_length (applications));
+  return applications;
+}
+
+
 
 static gboolean
 thunar_protected_manager_save_policy (ThunarProtectedManager *manager)
@@ -643,23 +692,33 @@ thunar_protected_manager_load_policy (ThunarProtectedManager *manager)
   {
     if (protected_files_parse (&fp, &lineno, &path, &profiles) == 0 && fp)
     {
-      TRACE ("ExecHelper: File %s is protected using the following policy:", path, profiles);
+      if (path && profiles)
+      {
+        TRACE ("ExecHelper: File %s is protected using the following policy:", path, profiles);
 
-      h = NULL;
-      endptr = NULL;
-      list = NULL;
-      do {
-        if (protected_files_parse_handler(profiles, &endptr, &h) == 0) {
-          TRACE ("ExecHelper: \t%s using profile '%s'\n", h->handler_path, h->profile_name);
+        h = NULL;
+        endptr = NULL;
+        list = NULL;
+        do {
+          if (protected_files_parse_handler(profiles, &endptr, &h) == 0) {
+            if (!h)
+            {
+              fprintf (stderr, "ExecHelper: Unknown error occurred while parsing handlers in line %d of protected files policy\n", lineno);
+            }
+            else
+            {
+              TRACE ("ExecHelper: \t%s using profile '%s'\n", h->handler_path, h->profile_name);
 
-          // prepending makes the policy items further down the file more prominent
-          list = g_list_prepend(list, h);
-        }
-      } while (endptr);
+              // prepending makes the policy items further down the file more prominent
+              list = g_list_prepend(list, h);
+            }
+          }
+        } while (endptr);
 
-      manager->file_order = g_list_append (manager->file_order, path);
-      g_hash_table_insert (manager->protected_files, path, list);
-      free(profiles);
+        manager->file_order = g_list_append (manager->file_order, path);
+        g_hash_table_insert (manager->protected_files, path, list);
+        free(profiles);
+      }
     }
   } while (fp);
 

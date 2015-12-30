@@ -20,7 +20,11 @@
 #ifndef __THUNAR_PROTECTED_MANAGER_H__
 #define __THUNAR_PROTECTED_MANAGER_H__
 
+#include <glib.h>
+#include <gtk/gtk.h>
 #include <exo/exo.h>
+#include <firejail/exechelper.h>
+#include <thunar/thunar-protected-chooser-button.h>
 
 G_BEGIN_DECLS;
 
@@ -36,14 +40,28 @@ typedef struct _ThunarProtectedManager      ThunarProtectedManager;
 #define THUNAR_IS_PROTECTED_MANAGER_CLASS(klass)  (G_TYPE_CHECK_CLASS_TYPE ((klass), THUNAR_TYPE_PROTECTED_MANAGER))
 #define THUNAR_PROTECTED_MANAGER_GET_CLASS(obj)   (G_TYPE_INSTANCE_GET_CLASS ((obj), THUNAR_TYPE_PROTECTED_MANAGER, ThunarProtectedManager))
 
+typedef struct _ProtectionDialogData
+{
+  GList     *handlers;
+  GList     *profiles;
+  GList     *files;
+  GList     *apps;
+  GtkWidget *dialog;
+  GtkTable  *content_area;
+  gboolean   folders_only;
+  void      *user_data;
+} ProtectionDialogData;
+
 GType                   thunar_protected_manager_get_type                   (void) G_GNUC_CONST;
 gboolean                thunar_protected_manager_is_file_protected_directly (ThunarFile *);
 gboolean                thunar_protected_manager_is_file_protected          (ThunarFile *);
-gboolean                thunar_protected_show_protection_dialog             (GtkWidget *,
-                                                                             GList *);
+ProtectionDialogData*   thunar_protected_show_protection_dialog             (GtkWidget *,
+                                                                             GList *,
+                                                                             gboolean);
 gboolean                thunar_protected_add_protected_file                 (ThunarFile *,
                                                                              gchar *);
 gboolean                thunar_protected_remove_protected_file              (ThunarFile *);
+GList*                  thunar_protected_get_applications_for_files         (GList *);
 gboolean                thunar_protected_manager_flush                      (void);
 ThunarProtectedManager* thunar_protected_manager_new                        (void);
 ThunarProtectedManager* thunar_protected_manager_get                        (void);

@@ -83,6 +83,13 @@ gboolean  thunar_g_app_info_launch                  (GAppInfo          *info,
                                                      GAppLaunchContext *context,
                                                      GError           **error);
 
+gboolean  thunar_g_app_info_launch_sandboxed        (GAppInfo          *info,
+                                                     GFile             *working_directory,
+                                                     GList             *path_list,
+                                                     GAppLaunchContext *context,
+                                                     const gchar       *profile,
+                                                     GError           **error);
+
 gboolean  thunar_g_app_info_should_show             (GAppInfo          *info);
 
 G_END_DECLS

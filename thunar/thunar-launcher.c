@@ -43,6 +43,8 @@
 #include <thunar/thunar-stock.h>
 #include <thunar/thunar-device-monitor.h>
 #include <thunar/thunar-window.h>
+#include <thunar/thunar-protected-manager.h>
+#include <gio/gdesktopappinfo.h>
 
 
 
@@ -97,6 +99,8 @@ static void                    thunar_launcher_open_windows               (Thuna
 static void                    thunar_launcher_update                     (ThunarLauncher           *launcher);
 static void                    thunar_launcher_action_open                (GtkAction                *action,
                                                                            ThunarLauncher           *launcher);
+static void                    thunar_launcher_action_open_sandbox_custom (GtkAction                *action,
+                                                                           ThunarLauncher           *launcher);
 static void                    thunar_launcher_action_open_with_other     (GtkAction                *action,
                                                                            ThunarLauncher           *launcher);
 static void                    thunar_launcher_action_open_in_new_window  (GtkAction                *action,
@@ -145,6 +149,8 @@ struct _ThunarLauncher
   guint                   ui_addons_merge_id;
 
   GtkAction              *action_open;
+  GtkAction              *action_open_sandboxed;
+  GtkAction              *action_open_sandbox_custom;
   GtkAction              *action_open_with_other;
   GtkAction              *action_open_in_new_window;
   GtkAction              *action_open_in_new_tab;
@@ -174,7 +180,9 @@ struct _ThunarLauncherPokeData
 
 static const GtkActionEntry action_entries[] =
 {
-  { "open", GTK_STOCK_OPEN, N_ ("_Open"), "<control>O", NULL, G_CALLBACK (thunar_launcher_action_open), },
+  { "open", NULL, N_ ("_Open"), "<control>O", NULL, G_CALLBACK (thunar_launcher_action_open), },
+  { "open-sandboxed", NULL, N_ ("Open _Sandboxed"), NULL, NULL, G_CALLBACK (thunar_launcher_action_open), },
+  { "open-sandbox-custom", NULL, N_ ("Open With Custom Sandbo_x"), NULL, NULL, G_CALLBACK (thunar_launcher_action_open_sandbox_custom), },
   { "open-in-new-tab", NULL, N_ ("Open in New _Tab"), "<control><shift>P", NULL, G_CALLBACK (thunar_launcher_action_open_in_new_tab), },
   { "open-in-new-window", NULL, N_ ("Open in New _Window"), "<control><shift>O", NULL, G_CALLBACK (thunar_launcher_action_open_in_new_window), },
   { "open-with-other", NULL, N_ ("Open With Other _Application..."), NULL, N_ ("Choose another application with which to open the selected file"), G_CALLBACK (thunar_launcher_action_open_with_other), },
@@ -184,6 +192,8 @@ static const GtkActionEntry action_entries[] =
 };
 
 static GQuark thunar_launcher_handler_quark;
+static GQuark thunar_launcher_sandboxed_quark;
+static GQuark thunar_launcher_profile_quark;
 
 
 
@@ -206,6 +216,8 @@ thunar_launcher_class_init (ThunarLauncherClass *klass)
 
   /* determine the "thunar-launcher-handler" quark */
   thunar_launcher_handler_quark = g_quark_from_static_string ("thunar-launcher-handler");
+  thunar_launcher_sandboxed_quark = g_quark_from_static_string ("thunar-launcher-sandboxed");
+  thunar_launcher_profile_quark = g_quark_from_static_string ("thunar-launcher-profile");
 
   gobject_class = G_OBJECT_CLASS (klass);
   gobject_class->dispose = thunar_launcher_dispose;
@@ -277,6 +289,8 @@ thunar_launcher_init (ThunarLauncher *launcher)
 
   /* determine references to our actions */
   launcher->action_open = gtk_action_group_get_action (launcher->action_group, "open");
+  launcher->action_open_sandboxed = gtk_action_group_get_action (launcher->action_group, "open-sandboxed");
+  launcher->action_open_sandbox_custom = gtk_action_group_get_action (launcher->action_group, "open-sandbox-custom");
   launcher->action_open_with_other = gtk_action_group_get_action (launcher->action_group, "open-with-other");
   launcher->action_open_in_new_window = gtk_action_group_get_action (launcher->action_group, "open-in-new-window");
   launcher->action_open_in_new_tab = gtk_action_group_get_action (launcher->action_group, "open-in-new-tab");
@@ -639,9 +653,11 @@ thunar_launcher_open_files (ThunarLauncher *launcher,
 
 
 static void
-thunar_launcher_open_paths (GAppInfo       *app_info,
-                            GList          *path_list,
-                            ThunarLauncher *launcher)
+_thunar_launcher_open_paths (GAppInfo       *app_info,
+                             GList          *path_list,
+                             ThunarLauncher *launcher,
+                             gboolean        sandboxed,
+                             const gchar    *profile)
 {
   GdkAppLaunchContext *context;
   GdkScreen           *screen;
@@ -650,7 +666,8 @@ thunar_launcher_open_paths (GAppInfo       *app_info,
   gchar               *message;
   gchar               *name;
   guint                n;
-
+  gint                 worked;
+  
   /* determine the screen on which to launch the application */
   screen = (launcher->widget != NULL) ? gtk_widget_get_screen (launcher->widget) : NULL;
 
@@ -665,7 +682,9 @@ thunar_launcher_open_paths (GAppInfo       *app_info,
     working_directory = thunar_file_get_file (launcher->current_directory);
 
   /* try to execute the application with the given URIs */
-  if (!thunar_g_app_info_launch (app_info, working_directory, path_list, G_APP_LAUNCH_CONTEXT (context), &error))
+  worked = sandboxed? thunar_g_app_info_launch_sandboxed (app_info, working_directory, path_list, G_APP_LAUNCH_CONTEXT (context), profile, &error) :
+                      thunar_g_app_info_launch (app_info, working_directory, path_list, G_APP_LAUNCH_CONTEXT (context), &error);
+  if (!worked)
     {
       /* figure out the appropriate error message */
       n = g_list_length (path_list);
@@ -690,6 +709,16 @@ thunar_launcher_open_paths (GAppInfo       *app_info,
 
   /* destroy the launch context */
   g_object_unref (context);
+}
+
+
+
+static void
+thunar_launcher_open_paths (GAppInfo       *app_info,
+                            GList          *path_list,
+                            ThunarLauncher *launcher)
+{
+  _thunar_launcher_open_paths(app_info, path_list, launcher, FALSE, NULL);
 }
 
 
@@ -753,25 +782,79 @@ thunar_launcher_open_windows (ThunarLauncher *launcher,
 
 
 
+static GAppInfo *make_info_for_handler (ExecHelpProtectedFileHandler *h)
+{
+  GAppInfo *info;
+  GError   *error;
+  gchar  ***candidates;
+  gchar    *execname;
+  gchar    *filename;
+  gint      i;
+  gint      j;
+  /* build a GAppInfo out of the application for convenience */
+  execname = strrchr (h->handler_path, '/');
+  if (execname)
+    execname++;
+  else
+    execname = h->handler_path;
+
+  filename = g_strdup_printf ("%s.desktop", execname);
+  info = (GAppInfo *) g_desktop_app_info_new_from_filename (filename);
+  g_free (filename);
+
+  /* if the binary's name doesn't match an app info, let us search for one */
+  if (!info)
+    {
+      candidates = g_desktop_app_info_search (execname);
+      
+      for (i = 0; candidates != NULL && candidates[i] != NULL; i++)
+        {
+          for (j = 0; candidates[i][j] != NULL && info == NULL; j++)
+            info = (GAppInfo *) g_desktop_app_info_new_from_filename (candidates[i][j]);
+
+        	g_strfreev (candidates[i]);
+        }
+
+      g_free (candidates);
+    }
+
+  /* in the worst case just make one app with the handler's path */
+  if (!info)
+    {
+      error = NULL;
+      info = g_app_info_create_from_commandline (h->handler_path, execname, G_APP_INFO_CREATE_NONE, &error);
+      if (error)
+          g_error_free (error);
+    }
+
+  return info;
+}
+
+
+
 static gboolean
 thunar_launcher_update_idle (gpointer data)
 {
-  ThunarLauncher *launcher = THUNAR_LAUNCHER (data);
-  const gchar    *context_menu_path;
-  const gchar    *file_menu_path;
-  GtkAction      *action;
-  gboolean        default_is_open_with_other = FALSE;
-  GList          *applications;
-  GList          *actions;
-  GList          *lp;
-  gchar          *tooltip;
-  gchar          *label;
-  gchar          *name;
-  gint            n_directories = 0;
-  gint            n_executables = 0;
-  gint            n_regulars = 0;
-  gint            n_selected_files = 0;
-  gint            n;
+  ExecHelpProtectedFileHandler *h;
+  ThunarLauncher               *launcher = THUNAR_LAUNCHER (data);
+  const gchar                  *context_menu_path;
+  const gchar                  *file_menu_path;
+  GtkAction                    *action;
+  GAppInfo                     *info;
+  gboolean                      default_is_open_with_other = FALSE;
+  GError                       *error = NULL;
+  GList                        *applications;
+  GList                        *actions;
+  GList                        *lp;
+  gchar                        *tooltip;
+  gchar                        *label;
+  gchar                        *name;
+  gint                          n_directories = 0;
+  gint                          n_protected = 0;
+  gint                          n_executables = 0;
+  gint                          n_regulars = 0;
+  gint                          n_selected_files = 0;
+  gint                          n;
 
   /* verify that we're connected to an UI manager */
   if (G_UNLIKELY (launcher->ui_manager == NULL))
@@ -789,6 +872,17 @@ thunar_launcher_update_idle (gpointer data)
 
   /* reset the application set for the "Open" action */
   g_object_set_qdata (G_OBJECT (launcher->action_open), thunar_launcher_handler_quark, NULL);
+  g_object_set_qdata (G_OBJECT (launcher->action_open), thunar_launcher_sandboxed_quark, NULL);
+  g_object_set_qdata (G_OBJECT (launcher->action_open), thunar_launcher_profile_quark, NULL);
+  g_object_set_qdata (G_OBJECT (launcher->action_open_with_other), thunar_launcher_handler_quark, NULL);
+  g_object_set_qdata (G_OBJECT (launcher->action_open_with_other), thunar_launcher_sandboxed_quark, NULL);
+  g_object_set_qdata (G_OBJECT (launcher->action_open_with_other), thunar_launcher_profile_quark, NULL);
+  g_object_set_qdata (G_OBJECT (launcher->action_open_sandboxed), thunar_launcher_handler_quark, NULL);
+  g_object_set_qdata (G_OBJECT (launcher->action_open_sandboxed), thunar_launcher_sandboxed_quark, (void *) 0xdeadbeef);
+  g_object_set_qdata (G_OBJECT (launcher->action_open_sandboxed), thunar_launcher_profile_quark, NULL);
+  g_object_set_qdata (G_OBJECT (launcher->action_open_sandbox_custom), thunar_launcher_handler_quark, NULL);
+  g_object_set_qdata (G_OBJECT (launcher->action_open_sandbox_custom), thunar_launcher_sandboxed_quark, (void *) 0xdeadbeef);
+  g_object_set_qdata (G_OBJECT (launcher->action_open_sandbox_custom), thunar_launcher_profile_quark, NULL);
 
   /* determine the number of files/directories/executables */
   for (lp = launcher->selected_files; lp != NULL; lp = lp->next, ++n_selected_files)
@@ -801,6 +895,8 @@ thunar_launcher_update_idle (gpointer data)
         }
       else
         {
+          if (thunar_protected_manager_is_file_protected (lp->data))
+            ++n_protected;
           if (thunar_file_is_executable (lp->data))
             ++n_executables;
           ++n_regulars;
@@ -817,7 +913,12 @@ thunar_launcher_update_idle (gpointer data)
 
       /* Prepare "Open" label and icon */
       gtk_action_set_label (launcher->action_open, _("_Open"));
-      gtk_action_set_stock_id (launcher->action_open, GTK_STOCK_OPEN);
+      gtk_action_set_gicon (launcher->action_open, g_icon_new_for_string ("gtk-open", &error));
+      if (error)
+        {
+          g_error_free (error);
+          error = NULL;
+        }
 
       if (n_selected_files == n_directories && n_directories >= 1)
         {
@@ -891,10 +992,260 @@ thunar_launcher_update_idle (gpointer data)
       /* hide the "Open With Other Application" actions */
       gtk_action_set_visible (launcher->action_open_with_other, FALSE);
       gtk_action_set_visible (launcher->action_open_with_other_in_menu, FALSE);
+      gtk_action_set_visible (launcher->action_open_sandboxed, FALSE);
+      gtk_action_set_visible (launcher->action_open_sandbox_custom, FALSE);
+    }
+  else if (n_selected_files == n_protected && n_protected > 0 && G_LIKELY (n_executables != n_selected_files))
+    {
+      /** CASE 2: one or more file in the selection is protected,
+       ** we will make the "Open" action act as a sandboxed open,
+       ** and the "Open Sandboxed" action act as unsandboxed (i.e.
+       ** all apps are sandboxed by default). We don't handle
+       ** protected executables yet.
+       **/
+
+      /* revert the sandboxed flags */
+      g_object_set_qdata (G_OBJECT (launcher->action_open), thunar_launcher_sandboxed_quark, (void *) 0xdeadbeef);
+      g_object_set_qdata (G_OBJECT (launcher->action_open_sandboxed), thunar_launcher_sandboxed_quark, NULL);
+      g_object_set_qdata (G_OBJECT (launcher->action_open_with_other), thunar_launcher_sandboxed_quark, (void *) 0xdeadbeef);
+      g_object_set_qdata (G_OBJECT (launcher->action_open_sandbox_custom), thunar_launcher_sandboxed_quark, (void *) 0xdeadbeef);
+
+      /* drop all previous addon actions from the action group */
+      actions = gtk_action_group_list_actions (launcher->action_group);
+      for (lp = actions; lp != NULL; lp = lp->next)
+        if (strncmp (gtk_action_get_name (lp->data), "thunar-launcher-addon-", 22) == 0)
+          gtk_action_group_remove_action (launcher->action_group, lp->data);
+      g_list_free (actions);
+
+      /* allocate a new merge id from the UI manager */
+      launcher->ui_addons_merge_id = gtk_ui_manager_new_merge_id (launcher->ui_manager);
+
+      /* make the actions visible and sensitive for now */
+      gtk_action_set_sensitive (launcher->action_open, TRUE);
+      gtk_action_set_sensitive (launcher->action_open_sandboxed, TRUE);
+      gtk_action_set_sensitive (launcher->action_open_sandbox_custom, TRUE);
+      gtk_action_set_visible (launcher->action_open, TRUE);
+      gtk_action_set_visible (launcher->action_open_sandboxed, TRUE);
+      gtk_action_set_visible (launcher->action_open_sandbox_custom, TRUE);
+
+      /* hide the "Open in n New Windows/Tabs" action */
+      gtk_action_set_visible (launcher->action_open_in_new_window, FALSE);
+      gtk_action_set_visible (launcher->action_open_in_new_tab, FALSE);
+
+      /* determine the set of applications that work for all selected files */
+      applications = thunar_protected_get_applications_for_files (launcher->selected_files);
+
+      /* reset the desktop actions list */
+      actions = NULL;
+
+      if (G_LIKELY (applications != NULL))
+        {
+          h = applications->data;
+          info = make_info_for_handler (h);
+
+          /* this should never happen, but account for it to avoid crashes */
+          if (!info)
+            {
+              gtk_action_set_visible (launcher->action_open, FALSE);
+              g_object_set (G_OBJECT (launcher->action_open_sandboxed),
+                            "label", _("Open With Default Applications"),
+                            "tooltip", ngettext ("Open the selected file with the default application",
+                                                 "Open the selected files with the default applications", n_selected_files),
+                            NULL);
+              g_object_set_qdata (G_OBJECT (launcher->action_open_sandboxed), thunar_launcher_handler_quark, NULL);
+            }
+          else
+            {
+              /* turn the "Open" action into "Open With DEFAULT" */
+              label = g_strdup_printf (_("_Open With Sandboxed \"%s\""), g_app_info_get_name (info));
+              tooltip = g_strdup_printf (ngettext ("Use a sandboxed \"%s\" to open the selected file",
+                                                   "Use a sandboxed \"%s\" to open the selected files",
+                                                   n_selected_files), g_app_info_get_name (info));
+              g_object_set (G_OBJECT (launcher->action_open),
+                            "label", label,
+                            "gicon", NULL,
+                            "stock-id", NULL,
+                            "icon-name", "firejail-new",
+                            "tooltip", tooltip,
+                            NULL);
+              g_free (tooltip);
+              g_free (label);
+              gtk_action_set_stock_id (launcher->action_open, NULL);
+              gtk_action_set_gicon (launcher->action_open, g_icon_new_for_string ("firejail-new", &error));
+              if (error)
+                {
+                  g_error_free (error);
+                  error = NULL;
+                }
+
+              /* remember the default application for the "Open" action */
+              g_object_set_qdata_full (G_OBJECT (launcher->action_open), thunar_launcher_handler_quark, info, g_object_unref);
+          
+              /* set the profile for the "Open" button which opens in a sandbox */
+              g_object_set_qdata_full (G_OBJECT (launcher->action_open), thunar_launcher_profile_quark, g_strdup (h->profile_name), g_free);
+              protected_files_handler_free (h);
+
+              /* turn the "Open Sandboxed" action into "Open With Sandboxed DEFAULT" */
+              label = g_strdup_printf (_("Open With _Unsandboxed \"%s\""), g_app_info_get_name (info));
+              tooltip = g_strdup_printf (ngettext ("Use an unsandboxed \"%s\" to open the selected file",
+                                                   "Use an unsandboxed \"%s\" to open the selected files",
+                                                   n_selected_files), g_app_info_get_name (info));
+              g_object_set (G_OBJECT (launcher->action_open_sandboxed),
+                            "label", label,
+                            "gicon", NULL,
+                            "stock-id", NULL,
+                            "icon-name", "firejail-unprotect",
+                            "tooltip", tooltip,
+                            NULL);
+              g_free (tooltip);
+              g_free (label);
+
+              /* remember the default application for the "Open _Sandboxed" action */
+              g_object_ref (info);
+              g_object_set_qdata_full (G_OBJECT (launcher->action_open_sandboxed), thunar_launcher_handler_quark, info, g_object_unref);
+
+              /* make sure "Open in Custom Sandbox" is as expected */
+              g_object_set (G_OBJECT (launcher->action_open_sandbox_custom),
+                            "label", _("Open With Custom Sandbo_x"),
+                            "gicon", NULL,
+                            "stock-id", NULL,
+                            "icon-name", NULL,
+                            "tooltip", ngettext ("Use a custom sandbox to open the selected file",
+                                                 "Use a custom sandbox to open the selected files",
+                                                 n_selected_files),
+                            NULL);
+
+              /* remember the default application for the "Open _Sandboxed" action */
+              g_object_ref (info);
+              g_object_set_qdata_full (G_OBJECT (launcher->action_open_sandboxed), thunar_launcher_handler_quark, info, g_object_unref);
+
+              /* drop the default application from the list */
+              applications = g_list_delete_link (applications, applications);
+            }
+        }
+      else if (G_UNLIKELY (n_selected_files == 1))
+        {
+          /* turn the "Open Sandboxed" action into "Open With Other Application" */
+          g_object_set (G_OBJECT (launcher->action_open_sandboxed),
+                        "label", _("Open With Default _Unsandboxed Application..."),
+                        "gicon", NULL,
+                        "stock-id", NULL,
+                        "icon-name", "firejail-unprotect",
+                        "tooltip", _("Open the selected file with the default application"),
+                        NULL);
+          default_is_open_with_other = TRUE;
+
+          /* hide the "Open" action, redundant with custom sandbox */
+          gtk_action_set_visible (launcher->action_open, FALSE);
+        }
+      else
+        {
+          /* we can only show a generic "Open" action */
+          g_object_set (G_OBJECT (launcher->action_open_sandboxed),
+                        "label", _("Open With Default _Unsandboxed Applications"),
+                        "gicon", NULL,
+                        "stock-id", NULL,
+                        "icon-name", "firejail-unprotect",
+                        "tooltip", ngettext ("Open the selected file with the default application",
+                                             "Open the selected files with the default applications", n_selected_files),
+                        NULL);
+
+          gtk_action_set_visible (launcher->action_open, FALSE);
+        }
+
+      /* place the other applications in the "Open With" submenu if we have more than 2 other applications, or the
+       * default action for the file is "Execute", in which case the "Open With" actions aren't that relevant either
+       */
+      if (G_UNLIKELY (g_list_length (applications) > 2 || n_executables == n_selected_files))
+        {
+          /* determine the base paths for the actions */
+          file_menu_path = "/main-menu/file-menu/placeholder-launcher/open-with-menu/placeholder-applications";
+          context_menu_path = "/file-context-menu/placeholder-launcher/open-with-menu/placeholder-applications";
+
+          /* show the "Open With Other Application" in the submenu and hide the toplevel one */
+          gtk_action_set_visible (launcher->action_open_with_other, FALSE);
+          gtk_action_set_visible (launcher->action_open_with_other_in_menu, (n_selected_files == 1));
+        }
+      else
+        {
+          /* determine the base paths for the actions */
+          file_menu_path = "/main-menu/file-menu/placeholder-launcher/placeholder-applications";
+          context_menu_path = "/file-context-menu/placeholder-launcher/placeholder-applications";
+
+          /* add a separator if we have more than one additional application */
+          if (G_LIKELY (applications != NULL))
+            {
+              /* add separator after the DEFAULT/execute action */
+              gtk_ui_manager_add_ui (launcher->ui_manager, launcher->ui_addons_merge_id,
+                                     file_menu_path, "separator", NULL,
+                                     GTK_UI_MANAGER_SEPARATOR, FALSE);
+              gtk_ui_manager_add_ui (launcher->ui_manager, launcher->ui_addons_merge_id,
+                                     context_menu_path, "separator", NULL,
+                                     GTK_UI_MANAGER_SEPARATOR, FALSE);
+            }
+
+          /* show the toplevel "Open With Other Application" (if not already done by the "Open" action) */
+          gtk_action_set_visible (launcher->action_open_with_other, !default_is_open_with_other && (n_selected_files == 1));
+          gtk_action_set_visible (launcher->action_open_with_other_in_menu, FALSE);
+        }
+
+      /* fix up the labels for the open with dialog, which isn't sandboxed */
+      g_object_set (G_OBJECT (launcher->action_open_with_other),
+                    "label", _("Open With Other Unsandboxed _Application..."),
+                    NULL);
+      
+      g_object_set (G_OBJECT (launcher->action_open_with_other_in_menu),
+                    "label", _("Open With Other Unsandboxed _Application..."),
+                    NULL);
+
+      /* add actions for all remaining applications */
+      if (G_LIKELY (applications != NULL))
+        {
+          /* process all applications and determine the desktop actions */
+          for (lp = applications, n = 0; lp != NULL; lp = lp->next, ++n)
+            {
+              h = lp->data;
+              info = make_info_for_handler(h);
+              if (!info)
+                continue;
+
+              /* generate a unique label, unique id and tooltip for the application's action */
+              name = g_strdup_printf ("thunar-launcher-addon-application%d-%p", n, launcher);
+              label = g_strdup_printf (_("Open With Sandboxed \"%s\""), g_app_info_get_name (info));
+              tooltip = g_strdup_printf (ngettext ("Use \"%s\" to open the selected file",
+                                                   "Use \"%s\" to open the selected files",
+                                                   n_selected_files), g_app_info_get_name (info));
+
+              /* allocate a new action for the application */
+              action = gtk_action_new (name, label, tooltip, NULL);
+             // gtk_action_set_gicon (action, g_app_info_get_icon (info));
+              gtk_action_set_icon_name (action, "firejail-new");
+              gtk_action_group_add_action (launcher->action_group, action);
+              g_object_set_qdata_full (G_OBJECT (action), thunar_launcher_handler_quark, info, g_object_unref);
+              g_object_set_qdata (G_OBJECT (launcher->action_open), thunar_launcher_sandboxed_quark, (void *) 0xdeadbeef);
+              g_object_set_qdata_full (G_OBJECT (launcher->action_open), thunar_launcher_profile_quark, g_strdup (h->profile_name), g_free);
+              g_signal_connect (G_OBJECT (action), "activate", G_CALLBACK (thunar_launcher_action_open), launcher);
+              gtk_ui_manager_add_ui (launcher->ui_manager, launcher->ui_addons_merge_id,
+                                     file_menu_path, name, name,
+                                     GTK_UI_MANAGER_MENUITEM, FALSE);
+              gtk_ui_manager_add_ui (launcher->ui_manager, launcher->ui_addons_merge_id,
+                                     context_menu_path, name, name,
+                                     GTK_UI_MANAGER_MENUITEM, FALSE);
+              g_object_unref (G_OBJECT (action));
+
+              /* cleanup */
+              g_free (tooltip);
+              g_free (label);
+              g_free (name);
+            }
+
+          /* cleanup */
+          g_list_free_full (applications, (GDestroyNotify) protected_files_handler_free);
+        }
     }
   else
     {
-      /** CASE 2: one or more file in the selection
+      /** CASE 3: one or more file in the selection
        **
        ** - "Execute" action if all selected files are executable
        ** - No "Open in n New Windows" action
@@ -912,6 +1263,12 @@ thunar_launcher_update_idle (gpointer data)
 
       /* make the "Open" action sensitive */
       gtk_action_set_sensitive (launcher->action_open, TRUE);
+
+      /* most likely the "Open Sandboxed" buttons will be available */
+      gtk_action_set_sensitive (launcher->action_open_sandboxed, TRUE);
+      gtk_action_set_sensitive (launcher->action_open_sandbox_custom, TRUE);
+      gtk_action_set_visible (launcher->action_open_sandboxed, TRUE);
+      gtk_action_set_visible (launcher->action_open_sandbox_custom, TRUE);
 
       /* hide the "Open in n New Windows/Tabs" action */
       gtk_action_set_visible (launcher->action_open_in_new_window, FALSE);
@@ -931,6 +1288,24 @@ thunar_launcher_update_idle (gpointer data)
                         "label", _("_Execute"),
                         "stock-id", GTK_STOCK_EXECUTE,
                         "tooltip", ngettext ("Execute the selected file", "Execute the selected files", n_selected_files),
+                        NULL);
+
+          /* turn the "Open Sandboxed" action into "Execute Sandboxed" */
+          g_object_set (G_OBJECT (launcher->action_open_sandboxed),
+                        "label", _("Execute _Sandboxed"),
+                        "gicon", NULL,
+                        "stock-id", NULL,
+                        "icon-name", "firejail-run",
+                        "tooltip", ngettext ("Execute the selected file in a sandbox", "Execute the selected files in a sandbox", n_selected_files),
+                        NULL);
+
+          /* turn the "Open in _Custom Sandbox" action into "Execute in _Custom Sandbox" */
+          g_object_set (G_OBJECT (launcher->action_open_sandbox_custom),
+                        "label", _("Execute With Custom Sandbo_x"),
+                        "gicon", NULL,
+                        "stock-id", NULL,
+                        "icon-name", NULL,
+                        "tooltip", ngettext ("Execute the selected file in a sandbox with a custom profile", "Execute the selected files in a sandbox with a custom profile", n_selected_files),
                         NULL);
         }
       else if (G_LIKELY (applications != NULL))
@@ -957,6 +1332,40 @@ thunar_launcher_update_idle (gpointer data)
           /* FIXME Add the desktop actions for this application.
            * Unfortunately this is not supported by GIO directly */
 
+          /* turn the "Open Sandboxed" action into "Open With Sandboxed DEFAULT" */
+          label = g_strdup_printf (_("Open With _Sandboxed \"%s\""), g_app_info_get_name (applications->data));
+          tooltip = g_strdup_printf (ngettext ("Use a sandboxed \"%s\" to open the selected file",
+                                               "Use a sandboxed \"%s\" to open the selected files",
+                                               n_selected_files), g_app_info_get_name (applications->data));
+          g_object_set (G_OBJECT (launcher->action_open_sandboxed),
+                        "label", label,
+                        "gicon", NULL,
+                        "stock-id", NULL,
+                        "icon-name", "firejail-new",
+                        "tooltip", tooltip,
+                        NULL);
+          g_free (tooltip);
+          g_free (label);
+
+          /* remember the default application for the "Open _Sandboxed" action */
+          g_object_ref (applications->data);
+          g_object_set_qdata_full (G_OBJECT (launcher->action_open_sandboxed), thunar_launcher_handler_quark, applications->data, g_object_unref);
+
+          /* make sure "Open in Custom Sandbox" is as expected */
+          g_object_set (G_OBJECT (launcher->action_open_sandbox_custom),
+                        "label", _("Open With Custom Sandbo_x"),
+                        "gicon", NULL,
+                        "stock-id", NULL,
+                        "icon-name", NULL,
+                        "tooltip", ngettext ("Use a custom sandbox to open the selected file",
+                                             "Use a custom sandbox to open the selected files",
+                                             n_selected_files),
+                        NULL);
+
+          /* remember the default application for the "Open _Sandboxed" action */
+          g_object_ref (applications->data);
+          g_object_set_qdata_full (G_OBJECT (launcher->action_open_sandboxed), thunar_launcher_handler_quark, applications->data, g_object_unref);
+
           /* drop the default application from the list */
           applications = g_list_delete_link (applications, applications);
         }
@@ -968,6 +1377,9 @@ thunar_launcher_update_idle (gpointer data)
                         "tooltip", _("Choose another application with which to open the selected file"),
                         NULL);
           default_is_open_with_other = TRUE;
+
+          /* hide the "Open Sandboxed" action, redundant with custom sandbox */
+          gtk_action_set_visible (launcher->action_open_sandboxed, FALSE);
         }
       else
         {
@@ -976,6 +1388,13 @@ thunar_launcher_update_idle (gpointer data)
                         "label", _("_Open With Default Applications"),
                         "tooltip", ngettext ("Open the selected file with the default application",
                                              "Open the selected files with the default applications", n_selected_files),
+                        NULL);
+
+          /* we can only show a generic "Open in Sandbox" action */
+          g_object_set (G_OBJECT (launcher->action_open_sandboxed),
+                        "label", _("Open in a _Sandbox With Default Applications"),
+                        "tooltip", ngettext ("Open the selected file with the default application in a sandbox",
+                                             "Open the selected files with the default applications in the same sandbox", n_selected_files),
                         NULL);
         }
 
@@ -1014,6 +1433,15 @@ thunar_launcher_update_idle (gpointer data)
           gtk_action_set_visible (launcher->action_open_with_other, !default_is_open_with_other && (n_selected_files == 1));
           gtk_action_set_visible (launcher->action_open_with_other_in_menu, FALSE);
         }
+
+      /* refresh the Open With dialog labels */
+      g_object_set (G_OBJECT (launcher->action_open_with_other),
+                    "label", _("Open With Other _Application..."),
+                    NULL);
+      
+      g_object_set (G_OBJECT (launcher->action_open_with_other_in_menu),
+                    "label", _("Open With Other _Application..."),
+                    NULL);
 
       /* add actions for all remaining applications */
       if (G_LIKELY (applications != NULL))
@@ -1341,11 +1769,13 @@ thunar_launcher_poke_files_finish (ThunarBrowser *browser,
 
 static void
 thunar_launcher_action_open (GtkAction      *action,
-                             ThunarLauncher *launcher)
+                              ThunarLauncher *launcher)
 {
   ThunarLauncherPokeData *poke_data;
   GAppInfo               *app_info;
   GList                  *selected_paths;
+  gboolean                sandboxed;
+  gchar                  *profile;
 
   _thunar_return_if_fail (GTK_IS_ACTION (action));
   _thunar_return_if_fail (THUNAR_IS_LAUNCHER (launcher));
@@ -1355,16 +1785,20 @@ thunar_launcher_action_open (GtkAction      *action,
   if (!gtk_action_get_sensitive (action))
     return;
 
+  /* load sandbox-related parameters */
+  sandboxed = (NULL != g_object_get_qdata (G_OBJECT (action), thunar_launcher_sandboxed_quark));
+  profile = g_object_get_qdata (G_OBJECT (action), thunar_launcher_profile_quark);
+
   /* check if we have a mime handler associated with the action */
   app_info = g_object_get_qdata (G_OBJECT (action), thunar_launcher_handler_quark);
   if (G_LIKELY (app_info != NULL))
     {
       /* try to open the selected files using the given application */
       selected_paths = thunar_file_list_to_thunar_g_file_list (launcher->selected_files);
-      thunar_launcher_open_paths (app_info, selected_paths, launcher);
+      _thunar_launcher_open_paths (app_info, selected_paths, launcher, sandboxed, profile);
       thunar_g_file_list_free (selected_paths);
     }
-  else if (launcher->selected_files != NULL)
+  else if (launcher->selected_files != NULL && !sandboxed)
     {
       if (launcher->selected_files->next == NULL)
         {
@@ -1381,6 +1815,77 @@ thunar_launcher_action_open (GtkAction      *action,
            thunar_launcher_poke_files (launcher, poke_data);
         }
     }
+}
+
+
+
+static void
+thunar_launcher_action_open_sandbox_custom_cb (GtkDialog *dialog,
+                                               gint       response_id,
+                                               gpointer   user_data)
+{
+  ThunarProtectedManager *manager  = thunar_protected_manager_get ();
+  ProtectionDialogData   *data     = (ProtectionDialogData *) user_data;
+  ThunarLauncher         *launcher = NULL;
+  GAppInfo               *handler;
+  GList                  *selected_paths;
+  GList                  *lh, *lp;
+  gchar                  *profile;
+
+  g_return_if_fail (manager != NULL);
+  g_return_if_fail (data != NULL);
+
+  launcher = (ThunarLauncher *) data->user_data;
+  g_return_if_fail (THUNAR_IS_LAUNCHER (launcher));
+
+  if (response_id == GTK_RESPONSE_ACCEPT)
+    {
+      for (lp = data->profiles, lh = data->handlers; lp && lh; lp = lp->next, lh = lh->next)
+        {
+          profile = gtk_combo_box_text_get_active_text (lp->data);
+          handler = thunar_protected_chooser_button_get_current_info (lh->data);
+
+          selected_paths = thunar_file_list_to_thunar_g_file_list (launcher->selected_files);
+          _thunar_launcher_open_paths (handler, selected_paths, launcher, TRUE, profile);
+
+          thunar_g_file_list_free (selected_paths);
+          if (profile)
+            g_free (profile);
+          if (handler)
+            g_object_unref (handler);
+        }
+    }
+
+  g_list_free_full (data->files, g_object_unref);
+  g_list_free (data->apps); // we should use free_full but there's a referencing bug in the apps ctor
+  g_list_free (data->handlers); // destroyed by gtk_widget_destroy on container
+  g_list_free (data->profiles); // destroyed by gtk_widget_destroy on container
+
+  gtk_widget_destroy (GTK_WIDGET (dialog));
+}
+
+
+
+static void
+thunar_launcher_action_open_sandbox_custom (GtkAction      *action,
+                                            ThunarLauncher *launcher)
+{
+  ProtectionDialogData *data;
+  GtkWidget            *widget;
+  GtkWidget            *toplevel;
+
+  /* determine the toplevel window for the chooser */
+  widget = thunar_launcher_get_widget (launcher);
+  toplevel = gtk_widget_get_toplevel (widget);
+
+  /* display a ready-made dialog for protected file policy editing */
+  data = thunar_protected_show_protection_dialog (toplevel, launcher->selected_files, FALSE);
+  if (!data)
+    return;
+
+  /* connect it to our custom callback */
+  data->user_data = launcher;
+  g_signal_connect (data->dialog, "response", G_CALLBACK (thunar_launcher_action_open_sandbox_custom_cb), data);
 }
 
 
@@ -1522,6 +2027,7 @@ thunar_launcher_poke_data_new (GList *files)
   data->directories_in_tabs = FALSE;
 
   return data;
+
 }
 
 

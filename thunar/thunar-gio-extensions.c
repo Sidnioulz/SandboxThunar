@@ -519,12 +519,13 @@ thunar_g_file_list_to_stringv (GList *list)
 
 
 
-gboolean
-thunar_g_app_info_launch (GAppInfo          *info,
-                          GFile             *working_directory,
-                          GList             *path_list,
-                          GAppLaunchContext *context,
-                          GError           **error)
+static gboolean
+_thunar_g_app_info_launch (GAppInfo          *exec_info,
+                           GAppInfo          *app_info,
+                           GFile             *working_directory,
+                           GList             *path_list,
+                           GAppLaunchContext *context,
+                           GError           **error)
 {
   ThunarFile   *file;
   GList        *lp;
@@ -533,7 +534,8 @@ thunar_g_app_info_launch (GAppInfo          *info,
   gchar        *new_path = NULL;
   gchar        *old_path = NULL;
 
-  _thunar_return_val_if_fail (G_IS_APP_INFO (info), FALSE);
+  _thunar_return_val_if_fail (G_IS_APP_INFO (exec_info), FALSE);
+  _thunar_return_val_if_fail (G_IS_APP_INFO (app_info), FALSE);
   _thunar_return_val_if_fail (working_directory == NULL || G_IS_FILE (working_directory), FALSE);
   _thunar_return_val_if_fail (path_list != NULL, FALSE);
   _thunar_return_val_if_fail (G_IS_APP_LAUNCH_CONTEXT (context), FALSE);
@@ -555,7 +557,7 @@ thunar_g_app_info_launch (GAppInfo          *info,
     }
 
   /* launch the paths with the specified app info */
-  result = g_app_info_launch (info, path_list, context, error);
+  result = g_app_info_launch (exec_info, path_list, context, error);
 
   /* if successful, remember the application as last used for the file types */
   if (result == TRUE)
@@ -568,7 +570,7 @@ thunar_g_app_info_launch (GAppInfo          *info,
               content_type = thunar_file_get_content_type (file);
 
               /* emit "changed" on the file if we successfully changed the last used application */
-              if (g_app_info_set_as_last_used_for_type (info, content_type, NULL))
+              if (g_app_info_set_as_last_used_for_type (app_info, content_type, NULL))
                 thunar_file_changed (file);
 
               g_object_unref (file);
@@ -589,6 +591,54 @@ thunar_g_app_info_launch (GAppInfo          *info,
     }
 
   return result;
+}
+
+
+
+gboolean
+thunar_g_app_info_launch (GAppInfo          *info,
+                          GFile             *working_directory,
+                          GList             *path_list,
+                          GAppLaunchContext *context,
+                          GError           **error)
+{
+  return _thunar_g_app_info_launch (info, info, working_directory, path_list, context, error);
+}
+
+
+
+gboolean
+thunar_g_app_info_launch_sandboxed (GAppInfo          *info,
+                                    GFile             *working_directory,
+                                    GList             *path_list,
+                                    GAppLaunchContext *context,
+                                    const gchar       *profile,
+                                    GError           **error)
+{
+  GAppInfo     *sandbox_info = NULL;
+  gchar        *executable = NULL;
+
+  _thunar_return_val_if_fail (G_IS_APP_INFO (info), FALSE);
+  _thunar_return_val_if_fail (working_directory == NULL || G_IS_FILE (working_directory), FALSE);
+  _thunar_return_val_if_fail (path_list != NULL, FALSE);
+  _thunar_return_val_if_fail (G_IS_APP_LAUNCH_CONTEXT (context), FALSE);
+  _thunar_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+  if (profile)
+    executable = g_strdup_printf ("firejail --helper --debug --profile=/etc/firejail/%s.profile %s", profile, g_app_info_get_executable (info));
+  else
+    executable = g_strdup_printf ("firejail --helper --debug %s", g_app_info_get_executable (info));
+
+  sandbox_info = g_app_info_create_from_commandline (executable,
+                                                     g_app_info_get_name (info),
+                                                     g_app_info_supports_uris (info) ? G_APP_INFO_CREATE_SUPPORTS_URIS : G_APP_INFO_CREATE_NONE,
+                                                     error);
+  g_free (executable);
+
+  if (error && *error)
+    return FALSE;
+
+  return _thunar_g_app_info_launch (sandbox_info, info, working_directory, path_list, context, error);
 }
 
 

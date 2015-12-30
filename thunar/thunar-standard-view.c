@@ -2934,7 +2934,7 @@ thunar_window_action_protect_current_directory (GtkToggleAction    *action,
 
           toplevel = gtk_widget_get_toplevel (GTK_WIDGET (standard_view));
           thunar_protected_show_protection_dialog (gtk_widget_is_toplevel (toplevel) ? toplevel : NULL,
-                                                   list);
+                                                   list, TRUE);
 
           g_list_free (list);
         }
@@ -2964,7 +2964,7 @@ thunar_window_action_protect_file         (GtkToggleAction    *action,
         {
           toplevel = gtk_widget_get_toplevel (GTK_WIDGET (standard_view));
           thunar_protected_show_protection_dialog (gtk_widget_is_toplevel (toplevel) ? toplevel : NULL,
-                                                   standard_view->priv->selected_files);
+                                                   standard_view->priv->selected_files, TRUE);
         }
       else
         {
