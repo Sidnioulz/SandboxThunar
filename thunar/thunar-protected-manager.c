@@ -627,6 +627,24 @@ thunar_protected_manager_clear_policy (ThunarProtectedManager *manager)
 gboolean
 thunar_protected_manager_is_file_protected (ThunarFile *file)
 {
+  g_return_val_if_fail (file != NULL, FALSE);
+  g_return_val_if_fail (THUNAR_IS_FILE (file), FALSE);
+
+  return thunar_protected_manager_is_g_file_protected (thunar_file_get_file (file));
+}
+
+gboolean
+thunar_protected_manager_is_file_protected_directly (ThunarFile *file)
+{
+  g_return_val_if_fail (file != NULL, FALSE);
+  g_return_val_if_fail (THUNAR_IS_FILE (file), FALSE);
+
+  return thunar_protected_manager_is_g_file_protected_directly (thunar_file_get_file (file));
+}
+
+gboolean
+thunar_protected_manager_is_g_file_protected (GFile *file)
+{
   ThunarProtectedManager *manager = thunar_protected_manager_get ();
   gchar     *path      = NULL;
   gchar     *iter      = NULL;
@@ -634,8 +652,9 @@ thunar_protected_manager_is_file_protected (ThunarFile *file)
 
   g_return_val_if_fail (manager != NULL, FALSE);
   g_return_val_if_fail (file != NULL, FALSE);
+  g_return_val_if_fail (G_IS_FILE (file), FALSE);
 
-  iter = path = g_file_get_path (thunar_file_get_file (file));
+  iter = path = g_file_get_path (file);
   while (iter && *iter && !protected)
   {
     protected = g_hash_table_contains (manager->protected_files, iter);
@@ -653,7 +672,7 @@ thunar_protected_manager_is_file_protected (ThunarFile *file)
 }
 
 gboolean
-thunar_protected_manager_is_file_protected_directly (ThunarFile *file)
+thunar_protected_manager_is_g_file_protected_directly (GFile *file)
 {
   ThunarProtectedManager *manager = thunar_protected_manager_get ();
   gchar     *path      = NULL;
@@ -661,8 +680,9 @@ thunar_protected_manager_is_file_protected_directly (ThunarFile *file)
 
   g_return_val_if_fail (manager != NULL, FALSE);
   g_return_val_if_fail (file != NULL, FALSE);
+  g_return_val_if_fail (G_IS_FILE (file), FALSE);
 
-  path = g_file_get_path (thunar_file_get_file (file));
+  path = g_file_get_path (file);
   if (path)
     protected = g_hash_table_contains (manager->protected_files, path);
   g_free (path);

@@ -1815,6 +1815,10 @@ thunar_launcher_action_open (GtkAction      *action,
            thunar_launcher_poke_files (launcher, poke_data);
         }
     }
+  else if (launcher->selected_files != NULL && sandboxed)
+    {
+      thunar_launcher_action_open_sandbox_custom (NULL, launcher);
+    }
 }
 
 
@@ -1831,7 +1835,7 @@ thunar_launcher_action_open_sandbox_custom_cb (GtkDialog *dialog,
   GList                  *selected_paths;
   GList                  *lh, *lp;
   gchar                  *profile;
-
+  
   g_return_if_fail (manager != NULL);
   g_return_if_fail (data != NULL);
 

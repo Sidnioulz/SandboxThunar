@@ -37,6 +37,7 @@
 #include <thunar/thunar-preferences.h>
 #include <thunar/thunar-private.h>
 #include <thunar/thunar-util.h>
+#include <thunar/thunar-protected-manager.h>
 
 
 
@@ -617,6 +618,11 @@ thunar_g_app_info_launch_sandboxed (GAppInfo          *info,
 {
   GAppInfo     *sandbox_info = NULL;
   gchar        *executable = NULL;
+  gchar        *whitelist_str = NULL;
+  gchar        *profile_str = NULL;
+  gchar        *old_str_ptr = NULL;
+  GList        *path_ptr;
+  GFile        *protected_file = NULL;
 
   _thunar_return_val_if_fail (G_IS_APP_INFO (info), FALSE);
   _thunar_return_val_if_fail (working_directory == NULL || G_IS_FILE (working_directory), FALSE);
@@ -625,13 +631,52 @@ thunar_g_app_info_launch_sandboxed (GAppInfo          *info,
   _thunar_return_val_if_fail (error == NULL || *error == NULL, FALSE);
 
   if (profile)
-    executable = g_strdup_printf ("firejail --helper --debug --profile=/etc/firejail/%s.profile %s", profile, g_app_info_get_executable (info));
+    profile_str = g_strdup_printf (" --profile=/etc/firejail/%s.profile", profile);
   else
-    executable = g_strdup_printf ("firejail --helper --debug %s", g_app_info_get_executable (info));
+    profile_str = g_strdup ("");
+
+  if (path_list)
+    {
+      path_ptr = path_list;
+      while (path_ptr)
+        {
+          protected_file = (GFile *) path_ptr->data;
+          while (g_file_has_parent (protected_file, NULL))
+            {
+              if (thunar_protected_manager_is_g_file_protected_directly (protected_file))
+                {
+                  if (whitelist_str)
+                    {
+                      old_str_ptr = whitelist_str;
+                      whitelist_str = g_strdup_printf ("%s:%s", whitelist_str, g_file_get_path (protected_file));
+                      g_free (old_str_ptr);
+                    }
+                  else
+                    whitelist_str = g_strdup (g_file_get_path (protected_file));
+                }
+
+              protected_file = g_file_get_parent (protected_file);
+            }
+
+          path_ptr = path_ptr->next;
+        }
+
+      old_str_ptr = whitelist_str;
+      whitelist_str = g_strdup_printf (" --whitelist-files=\"%s\"", whitelist_str);
+      g_free (old_str_ptr);
+    }
+  else
+    profile_str = g_strdup ("");
+
+  executable = g_strdup_printf ("firejail%s%s %s", profile_str, whitelist_str, g_app_info_get_commandline (info));
+  g_free (profile_str);
+  g_free (whitelist_str);
+  
+  printf ("DBG: %s\n\n\n\n", executable);
 
   sandbox_info = g_app_info_create_from_commandline (executable,
                                                      g_app_info_get_name (info),
-                                                     g_app_info_supports_uris (info) ? G_APP_INFO_CREATE_SUPPORTS_URIS : G_APP_INFO_CREATE_NONE,
+                                                     g_app_info_get_support_flags (info),
                                                      error);
   g_free (executable);
 

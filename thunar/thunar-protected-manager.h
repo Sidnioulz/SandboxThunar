@@ -52,19 +52,21 @@ typedef struct _ProtectionDialogData
   void      *user_data;
 } ProtectionDialogData;
 
-GType                   thunar_protected_manager_get_type                   (void) G_GNUC_CONST;
-gboolean                thunar_protected_manager_is_file_protected_directly (ThunarFile *);
-gboolean                thunar_protected_manager_is_file_protected          (ThunarFile *);
-ProtectionDialogData*   thunar_protected_show_protection_dialog             (GtkWidget *,
-                                                                             GList *,
-                                                                             gboolean);
-gboolean                thunar_protected_add_protected_file                 (ThunarFile *,
-                                                                             gchar *);
-gboolean                thunar_protected_remove_protected_file              (ThunarFile *);
-GList*                  thunar_protected_get_applications_for_files         (GList *);
-gboolean                thunar_protected_manager_flush                      (void);
-ThunarProtectedManager* thunar_protected_manager_new                        (void);
-ThunarProtectedManager* thunar_protected_manager_get                        (void);
+GType                   thunar_protected_manager_get_type                     (void) G_GNUC_CONST;
+gboolean                thunar_protected_manager_is_file_protected_directly   (ThunarFile *);
+gboolean                thunar_protected_manager_is_file_protected            (ThunarFile *);
+gboolean                thunar_protected_manager_is_g_file_protected_directly (GFile *);
+gboolean                thunar_protected_manager_is_g_file_protected          (GFile *);
+ProtectionDialogData*   thunar_protected_show_protection_dialog               (GtkWidget *,
+                                                                               GList *,
+                                                                               gboolean);
+gboolean                thunar_protected_add_protected_file                   (ThunarFile *,
+                                                                               gchar *);
+gboolean                thunar_protected_remove_protected_file                (ThunarFile *);
+GList*                  thunar_protected_get_applications_for_files           (GList *);
+gboolean                thunar_protected_manager_flush                        (void);
+ThunarProtectedManager* thunar_protected_manager_new                          (void);
+ThunarProtectedManager* thunar_protected_manager_get                          (void);
 
 G_END_DECLS;
 
