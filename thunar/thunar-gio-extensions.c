@@ -623,6 +623,7 @@ thunar_g_app_info_launch_sandboxed (GAppInfo          *info,
   gchar        *old_str_ptr = NULL;
   GList        *path_ptr;
   GFile        *protected_file = NULL;
+  gint          flags;
 
   _thunar_return_val_if_fail (G_IS_APP_INFO (info), FALSE);
   _thunar_return_val_if_fail (working_directory == NULL || G_IS_FILE (working_directory), FALSE);
@@ -672,11 +673,14 @@ thunar_g_app_info_launch_sandboxed (GAppInfo          *info,
   g_free (profile_str);
   g_free (whitelist_str);
   
-  printf ("DBG: %s\n\n\n\n", executable);
 
+  // FIXME: it's lame that GIO won't let us know more about the GAppInfo, try to extract the filename if possible and get info from the underlying GKeyFile.
+  flags = G_APP_INFO_CREATE_NONE;
+  if (g_app_info_supports_uris (info))
+    flags |= G_APP_INFO_CREATE_SUPPORTS_URIS;
   sandbox_info = g_app_info_create_from_commandline (executable,
                                                      g_app_info_get_name (info),
-                                                     g_app_info_get_support_flags (info),
+                                                     flags,
                                                      error);
   g_free (executable);
 
